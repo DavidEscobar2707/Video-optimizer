@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "veo-studio": {
+      "command": "python3",
+      "args": ["C:\\Users\\david\\OneDrive\\Desktop\\Video_optimizatiob\\mcp-server.py"],
+      "env": {
+        "GEMINI_API_KEY": "AIzaSyDjOx0XDDoRXZsWrxVvSYjuRBZns3OO4LI",
+        "DATABASE_URL": "postgresql://user:pass@localhost:5432/veo_studio"
+      }
+    }
+  }
+}

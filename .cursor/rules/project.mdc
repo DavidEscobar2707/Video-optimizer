@@ -1,0 +1,539 @@
+---
+alwaysApply: true
+---
+description: VeoStudio - Production AI Video Generation Project
+globs: */
+alwaysApply: true
+🎬 VeoStudio: Cursor Rules & Context Engineering
+I. PRINCIPIOS ARQUITECTÓNICOS
+1. Context Engineering First
+Toda decisión de arquitectura debe minimizar pérdida de contexto
+
+Documentar patrones en archivos referenciables
+
+Usar system prompts reutilizables
+
+Versionar contexto para reproducibilidad
+
+2. Token Optimization
+Batching de requests siempre que sea posible
+
+Caching agresivo de respuestas
+
+Reuso de prompts exitosos en templates
+
+Monitoreo continuo de consumo
+
+3. Production-Ready Standards
+Validación de entrada con Zod en todos los endpoints
+
+Error handling explícito con códigos específicos
+
+TypeScript strict (no any)
+
+Tests unitarios mínimo 80% coverage
+
+II. STACK DECISIONS (Why?)
+✅ Next.js 15 (App Router)
+API routes collocadas con components (DRY)
+
+Server components para seguridad de API keys
+
+Built-in optimizations (compression, caching)
+
+Vercel deployment nativo
+
+✅ Gemini API (No OpenAI)
+Veo 3.1 mejor para videos de producto
+
+Pricing más competitivo
+
+Native audio support en Veo 3.1
+
+Context window de 2M tokens (Long Context)
+
+✅ PostgreSQL + Prisma
+ACID compliance para transacciones de créditos
+
+Migrations automáticas con Prisma
+
+Type-safe queries en TypeScript
+
+Excelente para auditoría y compliance
+
+✅ Redis + Bull Queue
+Procesamiento asincrónico de videos
+
+Retry logic automático
+
+Job persistence
+
+Webhook notifications
+
+✅ FastMCP (Python)
+Integración nativa con Cursor
+
+Decorators para simplificar protocol
+
+Async/await support
+
+Hot reload en development
+
+III. CODE STYLE & PATTERNS
+TypeScript Standards
+typescript
+// ✅ CORRECTO
+interface VideoGenerationRequest {
+  prompt: string
+  duration: 4 | 6 | 8
+  resolution: "720p" | "1080p"
+  projectId?: string
+}
+
+type VideoStatus = "queued" | "processing" | "completed" | "failed"
+
+// ✅ Explicit returns SIEMPRE
+async function generateVideo(
+  req: VideoGenerationRequest
+): Promise<{ videoId: string; status: VideoStatus }> {
+  // Implementation
+}
+
+// ❌ EVITAR
+interface VideoRequest {
+  prompt: any
+  duration: number
+  data: any
+}
+
+function generateVideo(req: any): any {
+  // Perdemos type safety y context
+}
+Error Handling Pattern
+typescript
+// API Response estándar
+interface ApiResponse<T> {
+  success: boolean
+  data: T | null
+  error?: {
+    code: string      // "INVALID_PROMPT" | "API_RATE_LIMIT"
+    message: string
+    details?: Record<string, any>
+  }
+  timestamp: Date
+  requestId: string
+}
+
+// Usar custom errors
+class VeoGenerationError extends Error {
+  constructor(
+    public code: string,
+    public details?: Record<string, any>
+  ) {
+    super(`Veo Error: ${code}`)
+  }
+}
+Naming Conventions
+text
+Components:      VideoGenerator.tsx, PromptEditor.tsx (PascalCase)
+Utils/Services:  videoOptimizer.ts, costCalculator.ts (camelCase)
+Types:           TVideoConfig, TVeoPrompt (T prefix + PascalCase)
+Constants:       MAX_BATCH_SIZE, DEFAULT_DURATION (UPPER_SNAKE_CASE)
+Files:           video-generator.ts, cost-tracker.ts (kebab-case)
+IV. PROYECTO ESPECÍFICO RULES
+4.1 Veo Prompt Engineering
+Template Obligatorio (5-Part Formula):
+
+text
+[CINEMATOGRAPHY] + [SUBJECT] + [ACTION] + [CONTEXT] + [STYLE & AMBIANCE]
+
+Ejemplo:
+"Close-up tracking shot | premium smartphone with matte finish | 
+rotating 360 degrees | minimalist white studio | 
+photorealistic, cinematic, warm gold lighting, sharp focus"
+Negativos SIEMPRE:
+
+text
+"low quality, blurry, distorted, watermarks, text overlays, 
+harsh shadows, unnatural colors, unprofessional"
+Reference Images Strategy:
+
+Máximo 3 images para "Ingredients to Video"
+
+Product shot + Brand color palette + Studio setup
+
+Cached localmente para reutilización
+
+4.2 API Endpoint Patterns
+Estructura estándar:
+
+text
+POST /api/videos/generate
+GET /api/videos/:id/status
+GET /api/videos/:id/download
+POST /api/projects
+GET /api/projects/:id
+DELETE /api/projects/:id
+Request Body Template:
+
+typescript
+interface GenerateVideoRequest {
+  prompt: string                    // Validado con schema Zod
+  duration: 4 | 6 | 8              // No números libres
+  resolution: "720p" | "1080p"     // Enum, no strings
+  aspectRatio: "16:9" | "9:16"
+  referenceImages?: string[]        // URLs validadas
+  projectId?: string                // Opcional pero loguear siempre
+  userId: string                    // De session/auth
+}
+4.3 Token Budget Management
+Usuario free tier:
+
+5 generaciones por día
+
+15 prompts de prueba (fast mode)
+
+100 análisis de quality
+
+Usuario pro:
+
+Unlimited generaciones (con presupuesto mensual en $)
+
+Priority queue
+
+Batch processing
+
+Implementar:
+
+typescript
+// Antes de cada generación
+async function checkTokenBudget(userId: string): Promise<boolean> {
+  const budget = await db.tokenBudget.findUnique({ where: { userId } })
+  return budget.remaining > estimatedCost
+}
+
+// Log después
+await db.tokenUsage.create({
+  userId,
+  videoId,
+  tokensUsed: actual,
+  costUsd: actual * RATE,
+  remainingBudget: budget.remaining - actual
+})
+4.4 Context Manager Usage
+En cada request handler:
+
+typescript
+// API Route: /api/videos/generate
+import { contextManager } from '@/lib/context-manager'
+
+export async function POST(request: Request) {
+  // 1. Cargar contexto relevante
+  const context = await contextManager.getRelevantContext({
+    userId,
+    taskType: 'video_generation',
+    prompt: req.prompt
+  })
+  
+  // 2. Usar en system prompt Gemini
+  const systemPrompt = `${context}\n${VEO_SYSTEM_PROMPT}`
+  
+  // 3. Guardar snapshots para debugging
+  await contextManager.saveContextSnapshot('generation', {
+    videoId,
+    timestamp: Date.now()
+  })
+}
+4.5 Database Patterns
+Tablas esenciales (Prisma schema):
+
+text
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  tokenBudget   TokenBudget?
+  projects      Project[]
+  generations   VideoGeneration[]
+  createdAt     DateTime  @default(now())
+}
+
+model Project {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  name          String
+  productName   String
+  productDesc   String
+  videos        VideoGeneration[]
+  createdAt     DateTime  @default(now())
+}
+
+model VideoGeneration {
+  id            String    @id @default(cuid())
+  projectId     String
+  project       Project   @relation(fields: [projectId], references: [id])
+  
+  prompt        String
+  veoVideoId    String?   // ID retornado por Gemini API
+  status        String    // "queued" | "processing" | "completed" | "failed"
+  
+  duration      Int       // 4, 6, 8
+  resolution    String    // "720p" | "1080p"
+  
+  estimatedCost Decimal
+  actualCost    Decimal?
+  
+  videoUrl      String?   // URL en Supabase
+  errorMsg      String?
+  
+  createdAt     DateTime  @default(now())
+  completedAt   DateTime?
+}
+
+model TokenBudget {
+  id            String    @id @default(cuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id])
+  
+  monthlyLimit  Decimal   // En USD
+  used          Decimal   @default(0)
+  resetAt       DateTime
+  
+  tier          String    // "free" | "pro" | "enterprise"
+}
+V. MCP SERVER TOOLS
+Estructura Obligatoria (server.py)
+python
+from fastmcp import FastMCP
+import logging
+
+mcp = FastMCP(name="VeoStudio")
+
+# Logging siempre
+logger = logging.getLogger(__name__)
+
+# ==================== TOOLS ====================
+
+@mcp.tool
+def optimize_veo_prompt(...) -> dict:
+    """
+    Optimiza prompt usando fórmula 5-parte.
+    
+    Retorna:
+      - prompt_optimized: str
+      - structure: dict con [cinematography, subject, action, context, style]
+      - tokens_estimated: int
+      - cost_estimate: float
+    """
+
+@mcp.tool
+def estimate_generation_cost(...) -> dict:
+    """
+    Estima costo ANTES de generar.
+    Usa pricing table:
+    - 4s/720p: $0.15
+    - 6s/720p: $0.25
+    - 8s/720p: $0.35
+    - 4s/1080p: $0.25
+    - 6s/1080p: $0.50
+    - 8s/1080p: $0.75
+    """
+
+@mcp.tool
+def generate_veo_video(...) -> dict:
+    """
+    Genera video en Veo. IMPORTANTE:
+    - Retorna job_id, NO esperar a completarse
+    - Usar polling en frontend
+    - Guardar prompt en DB para auditoría
+    """
+
+@mcp.tool
+def check_generation_status(video_id: str) -> dict:
+    """
+    Poll status. Retorna:
+    - status: "processing" | "completed" | "failed"
+    - progress: 0-100
+    - videoUrl: si completed
+    - error: si failed
+    """
+
+@mcp.tool
+def save_prompt_template(...) -> dict:
+    """
+    Guardar prompt exitoso para reutilización.
+    Tags automáticos basados en product_type.
+    """
+
+# ==================== RESOURCES ====================
+
+@mcp.resource("config://veo-pricing")
+def get_pricing() -> dict:
+    """Tabla actualizada de precios Veo"""
+
+@mcp.resource("templates://product-{type}")
+def get_product_template(type: str) -> dict:
+    """Prompts predefinidos por tipo de producto"""
+
+if __name__ == "__main__":
+    mcp.run()
+VI. TESTING & VALIDATION
+Validación de Prompts (Zod)
+typescript
+import { z } from 'zod'
+
+const VeoPromptSchema = z.object({
+  cinematography: z.string().min(20),
+  subject: z.string().min(10),
+  action: z.string().min(10),
+  context: z.string().min(10),
+  style: z.string().min(20),
+})
+
+// Validar en cada API call
+const parsed = VeoPromptSchema.parse(prompt)
+Test Structure
+text
+__tests__/
+  ├── unit/
+  │   ├── lib/gemini.test.ts
+  │   ├── lib/token-optimizer.test.ts
+  │   └── services/video-generator.test.ts
+  ├── integration/
+  │   ├── api/videos/generate.test.ts
+  │   └── mcp/server.test.py
+  └── e2e/
+      └── full-workflow.test.ts
+VII. PERFORMANCE CHECKLIST
+ API responses < 500ms (excluding video generation)
+
+ MCP tools < 1s response time
+
+ Database queries indexed
+
+ Redis cache hit rate > 80%
+
+ Image optimization (WebP, lazy loading)
+
+ Batch requests cuando sea posible
+
+ Request deduplication (same prompt = cached result)
+
+VIII. SECURITY CRITICAL
+✅ NEVER log full prompts in production (PII risk)
+
+✅ NEVER expose GEMINI_API_KEY to frontend
+
+✅ Validar user_id en CADA request
+
+✅ Rate limit por user + IP
+
+✅ Audit trail para TODO
+
+✅ Encriptar video storage URLs en DB
+
+✅ CORS properly configured
+
+IX. DEPLOYMENT CHECKLIST
+Pre-Production
+ Todas las variables de env configuradas
+
+ Database migrations run
+
+ Tests passing (npm run test)
+
+ Build sin errores (npm run build)
+
+ Staging deployment working
+
+ E2E tests passing
+
+Production
+ Database backup configurado
+
+ Monitoring + alerts activos
+
+ Error tracking (Sentry) conectado
+
+ Logging centralizado
+
+ CDN configured para videos
+
+ SSL certificates valid
+
+X. COMMON PATTERNS TO REUSE
+Context Management
+typescript
+// @/lib/context-manager.ts
+export class ContextManager {
+  async getRelevantContext(task: Task): Promise<string> {
+    // Cargar solo lo necesario
+    const [projectContext, userPrefs, systemKnowledge] = 
+      await Promise.all([
+        this.loadProjectContext(task.projectId),
+        this.loadUserPreferences(task.userId),
+        this.getSystemPrompts()
+      ])
+    
+    return `${systemKnowledge}\n${projectContext}\n${userPrefs}`
+  }
+}
+Prompt Building
+typescript
+// @/lib/veo-prompt-builder.ts
+export class VeoPromptBuilder {
+  constructor(private product: Product) {}
+  
+  build(): string {
+    return [
+      this.cinematography(),
+      this.subject(),
+      this.action(),
+      this.context(),
+      this.styleAmbiance()
+    ].join(' + ')
+  }
+  
+  private cinematography(): string {
+    // Implementar según tipo de producto
+  }
+}
+Cost Tracking
+typescript
+// @/services/metrics.ts
+export class MetricsService {
+  async trackVideoGeneration(config: {
+    videoId: string
+    estimatedCost: number
+    actualCost: number
+    duration: number
+    resolution: string
+  }): Promise<void> {
+    const savings = config.estimatedCost - config.actualCost
+    await db.videoMetrics.create({
+      ...config,
+      savedByOptimization: savings
+    })
+  }
+}
+FINAL CHECKLIST ANTES DE CADA COMMIT
+ No console.log en código (usar logger)
+
+ Tipos explícitos (no any)
+
+ Variables de entorno no hardcodeadas
+
+ Documentación de funciones complejas
+
+ Tests unitarios para lógica crítica
+
+ Error handling completo
+
+ Performance checked (no N+1 queries)
+
+ Security review (no secrets en repo)
+
+ CHANGELOG actualizado
+
+Última actualización: Noviembre 2025
+Versión: 1.0.0-context-engineering
